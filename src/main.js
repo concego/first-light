@@ -1,73 +1,71 @@
 /**
  * main.js — Orquestrador principal do First Light
- * Liga todos os módulos: mundo, mapa, HUD, estado, ações.
+ * Liga todos os módulos: mundo, mapa, HUD, estado, ações, minigames.
  */
 
 import { generateWorld, getCell, revealAround, CellType, Checklist } from './world.js';
 import { initMapRenderer, renderMap, attachCellClickHandler } from './mapRenderer.js';
 import { Audio } from './audio.js';
+import { startExtractMinigame } from './minigameExtract.js';
+import { startCombatMinigame }  from './minigameCombat.js';
 
 // ── ECJ Game Library ──────────────────────────────────────────────────────────
-// Importa direto do repositório via jsDelivr
-import { TimerCountdown, StateMachine, AccessibilityLayer }
-  from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/index.js';
+import { AccessibilityLayer }
+  from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/AccessibilityLayer.js';
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 const TOTAL_ACTIONS  = 16;
-const URGENT_ACTIONS = 4;   // alerta quando restar ≤ 4
+const URGENT_ACTIONS = 4;
 
 // ── Estado global ─────────────────────────────────────────────────────────────
-let world, player, hud, checklist, actionsLeft;
+let world, player, checklist, actionsLeft;
+let minigameActive = false;
 
 // ── Elementos DOM ─────────────────────────────────────────────────────────────
-const svg          = document.getElementById('map-svg');
-const ariaLive     = document.getElementById('aria-live');
-const hudTime      = document.getElementById('hud-time');
-const hudActions   = document.getElementById('hud-actions');
-const hudChecklist = document.getElementById('hud-checklist');
-const actionPanel  = document.getElementById('action-panel');
-const actionInfo   = document.getElementById('action-cell-info');
-const actionBtns   = document.getElementById('action-buttons');
-const nightPanel   = document.getElementById('night-panel');
-const nightText    = document.getElementById('night-narrative');
-const btnRestart   = document.getElementById('btn-restart');
+const svg           = document.getElementById('map-svg');
+const ariaLive      = document.getElementById('aria-live');
+const hudTime       = document.getElementById('hud-time');
+const hudActions    = document.getElementById('hud-actions');
+const hudChecklist  = document.getElementById('hud-checklist');
+const actionPanel   = document.getElementById('action-panel');
+const actionInfo    = document.getElementById('action-cell-info');
+const actionBtns    = document.getElementById('action-buttons');
+const minigamePanel = document.getElementById('minigame-panel');
+const nightPanel    = document.getElementById('night-panel');
+const nightText     = document.getElementById('night-narrative');
+const btnRestart    = document.getElementById('btn-restart');
 
 // ── Acessibilidade ────────────────────────────────────────────────────────────
 const a11y = AccessibilityLayer.create({ liveRegion: ariaLive });
-
-function speak(msg) {
-  a11y.speak(msg);
-}
+function speak(msg) { a11y.speak(msg); }
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function init() {
-  world      = generateWorld();
+  world       = generateWorld();
   actionsLeft = TOTAL_ACTIONS;
-
-  player = { col: world.startCol, row: world.startRow };
-
-  checklist = Checklist.map(item => ({ ...item, count: 0, done: false }));
+  player      = { col: world.startCol, row: world.startRow };
+  checklist   = Checklist.map(item => ({ ...item, count: 0, done: false }));
+  minigameActive = false;
 
   renderHUD();
   initMapRenderer(svg, world);
   renderMap(svg, world.cells, player.col, player.row);
   attachCellClickHandler(svg, onCellClick);
 
-  actionPanel.hidden = true;
-  nightPanel.hidden  = true;
+  actionPanel.hidden  = true;
+  nightPanel.hidden   = true;
+  minigamePanel.hidden = true;
 
-  speak('First Light. Você acordou numa floresta desconhecida. A noite está chegando. Use o mapa para explorar e se preparar.');
+  speak('First Light. Você acordou numa floresta desconhecida. A noite está chegando. Explore o mapa e se prepare antes do anoitecer.');
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
 function renderHUD() {
-  // Converte ações restantes em horas fictícias (cada ação = 30 min, início às 06:00)
-  const minutesLeft = actionsLeft * 30;
   const hour   = Math.floor((TOTAL_ACTIONS - actionsLeft) * 30 / 60) + 6;
   const minute = ((TOTAL_ACTIONS - actionsLeft) * 30) % 60;
   const timeStr = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-
   const sunIcon = actionsLeft > 8 ? '🌅' : actionsLeft > 4 ? '🌤️' : '🌆';
+
   hudTime.textContent    = `${sunIcon} ${timeStr}`;
   hudActions.textContent = `⏳ ${actionsLeft} ação${actionsLeft !== 1 ? 'ões' : ''} restante${actionsLeft !== 1 ? 's' : ''}`;
 
@@ -77,11 +75,13 @@ function renderHUD() {
     li.textContent = item.done
       ? `${item.label} ✓`
       : item.id === 'shelter'
-        ? `${item.label}`
+        ? item.label
         : `${item.label} (${item.count}/${item.required})`;
     if (item.done) li.classList.add('done');
     li.setAttribute('aria-label',
-      item.done ? `${item.label} concluído` : `${item.label}: ${item.count} de ${item.required}`
+      item.done
+        ? `${item.label} concluído`
+        : `${item.label}: ${item.count} de ${item.required}`
     );
     hudChecklist.appendChild(li);
   }
@@ -89,22 +89,19 @@ function renderHUD() {
 
 // ── Clique em célula ──────────────────────────────────────────────────────────
 function onCellClick({ col, row }) {
+  if (minigameActive) return;
+
   const cell = getCell(world.cells, col, row);
   if (!cell || !cell.revealed) return;
 
-  // Movimento: qualquer célula revelada (grátis)
-  const wasAt = { ...player };
   player.col = col;
   player.row = row;
 
-  // Revela vizinhos
   revealAround(world.cells, col, row, world.cols, world.rows);
   cell.visited = true;
 
   Audio.step();
   renderMap(svg, world.cells, player.col, player.row);
-
-  // Mostra painel de ação
   showActionPanel(cell);
 }
 
@@ -119,120 +116,146 @@ function showActionPanel(cell) {
     return;
   }
 
-  const isPlayer = cell.col === player.col && cell.row === player.row;
-
   switch (cell.type) {
     case CellType.WOOD:
       actionInfo.textContent = '🪵 Há madeira aqui. Coletar custa 30 minutos.';
-      addActionBtn('Coletar madeira', () => doCollect(cell, 'wood', 'Madeira coletada!'));
+      addBtn('Coletar madeira',  () => startExtract(cell, 'wood'));
       break;
 
     case CellType.FOOD:
       actionInfo.textContent = '🍖 Há comida aqui. Coletar custa 30 minutos.';
-      addActionBtn('Coletar comida', () => doCollect(cell, 'food', 'Comida coletada!'));
+      addBtn('Coletar comida',   () => startExtract(cell, 'food'));
       break;
 
     case CellType.HERB:
       actionInfo.textContent = '🌿 Há ervas aqui. Coletar custa 30 minutos.';
-      addActionBtn('Coletar ervas', () => doCollect(cell, 'herb', 'Ervas coletadas!'));
+      addBtn('Coletar ervas',    () => startExtract(cell, 'herb'));
       break;
 
     case CellType.WEAPON:
       actionInfo.textContent = '⚔️ Há material para uma arma aqui. Coletar custa 30 minutos.';
-      addActionBtn('Coletar material', () => doCollect(cell, 'weapon', 'Material coletado!'));
+      addBtn('Coletar material', () => startExtract(cell, 'weapon'));
       break;
 
     case CellType.GOBLIN:
       actionInfo.textContent = '👺 Um goblin está aqui! Combater custa 30 minutos.';
-      addActionBtn('Combater goblin', () => doCombat(cell, 'goblin'));
-      addActionBtn('Fugir', () => closePanelOnly());
+      addBtn('Combater goblin',  () => startCombat(cell, 'goblin'));
+      addBtn('Fugir',            () => actionPanel.hidden = true);
       break;
 
     case CellType.WOLF:
       actionInfo.textContent = '🐺 Um lobo está aqui! Combater custa 30 minutos.';
-      addActionBtn('Combater lobo', () => doCombat(cell, 'wolf'));
-      addActionBtn('Fugir', () => closePanelOnly());
+      addBtn('Combater lobo',    () => startCombat(cell, 'wolf'));
+      addBtn('Fugir',            () => actionPanel.hidden = true);
       break;
 
     case CellType.EMPTY:
-    default:
-      // Verificar se pode construir abrigo aqui
-      const hasMaterials = checklistDone('wood') && !checklistDone('shelter');
-      actionInfo.textContent = hasMaterials
+    default: {
+      const canBuild = checklistDone('wood') && !checklistDone('shelter');
+      actionInfo.textContent = canBuild
         ? '🏕️ Área vazia. Você pode construir o abrigo aqui (custa 30 minutos).'
         : 'Área vazia.';
-      if (hasMaterials) {
-        addActionBtn('Preparar terreno / Construir abrigo', () => doBuildShelter(cell));
-      }
+      if (canBuild) addBtn('Construir abrigo', () => doBuildShelter(cell));
       break;
+    }
   }
 
+  speak(actionInfo.textContent);
   actionPanel.hidden = false;
 }
 
-function addActionBtn(label, handler) {
+function addBtn(label, handler) {
   const btn = document.createElement('button');
   btn.textContent = label;
   btn.addEventListener('click', handler);
   actionBtns.appendChild(btn);
 }
 
-function closePanelOnly() {
+// ── Minigame: Extração ────────────────────────────────────────────────────────
+function startExtract(cell, itemId) {
   actionPanel.hidden = true;
+  minigameActive = true;
+
+  startExtractMinigame({
+    cellType: itemId,
+    panel:    minigamePanel,
+    ariaLive,
+
+    onComplete(type) {
+      minigameActive = false;
+      cell.depleted = true;
+      const item = checklist.find(i => i.id === type);
+      if (item && !item.done) {
+        item.count = Math.min(item.count + 1, item.required);
+        if (item.count >= item.required) item.done = true;
+      }
+      renderMap(svg, world.cells, player.col, player.row);
+      consumeAction(`${item?.label ?? 'Recurso'} coletado!`);
+    },
+
+    onFail() {
+      minigameActive = false;
+      consumeAction('Extração falhou. Tempo perdido.');
+    },
+
+    onCancel() {
+      minigameActive = false;
+      speak('Extração cancelada.');
+    },
+  });
 }
 
-// ── Ações ─────────────────────────────────────────────────────────────────────
-
-function consumeAction(msg) {
-  actionsLeft--;
-  renderHUD();
-  speak(msg + ` ${actionsLeft} ações restantes.`);
-  if (actionsLeft <= URGENT_ACTIONS) Audio.urgent();
-  if (actionsLeft <= 0) triggerNight();
-}
-
-function doCollect(cell, itemId, successMsg) {
+// ── Minigame: Combate ─────────────────────────────────────────────────────────
+function startCombat(cell, enemyType) {
   actionPanel.hidden = true;
-  Audio.collected();
-  cell.depleted = true;
+  minigameActive = true;
 
-  const item = checklist.find(i => i.id === itemId);
-  if (item && !item.done) {
-    item.count = Math.min(item.count + 1, item.required);
-    if (item.count >= item.required) item.done = true;
-  }
+  startCombatMinigame({
+    enemyType,
+    panel:    minigamePanel,
+    ariaLive,
 
-  renderMap(svg, world.cells, player.col, player.row);
-  consumeAction(successMsg);
+    onVictory(type) {
+      minigameActive = false;
+      cell.depleted = true;
+      renderMap(svg, world.cells, player.col, player.row);
+      consumeAction(`Você derrotou o ${type === 'goblin' ? 'goblin' : 'lobo'}!`);
+    },
+
+    onDefeat(type) {
+      minigameActive = false;
+      cell.depleted = true;
+      renderMap(svg, world.cells, player.col, player.row);
+      // Derrota no combate custa uma ação extra de recuperação
+      consumeAction(`Você foi derrotado pelo ${type === 'goblin' ? 'goblin' : 'lobo'} e perdeu tempo se recuperando.`);
+      consumeAction('Recuperação...');
+    },
+
+    onFlee() {
+      minigameActive = false;
+      speak('Você fugiu do combate.');
+    },
+  });
 }
 
-function doCombat(cell, enemyType) {
-  actionPanel.hidden = true;
-  // Combate simplificado: 60% chance de vencer
-  const won = Math.random() < 0.6;
-  cell.depleted = true;
-  renderMap(svg, world.cells, player.col, player.row);
-
-  if (won) {
-    Audio.enemyDown();
-    consumeAction(`Você derrotou o ${enemyType === 'goblin' ? 'goblin' : 'lobo'}!`);
-  } else {
-    Audio.damage();
-    consumeAction(`O ${enemyType === 'goblin' ? 'goblin' : 'lobo'} fugiu, mas você se machucou.`);
-  }
-}
-
+// ── Ação: Construir abrigo ────────────────────────────────────────────────────
 function doBuildShelter(cell) {
   actionPanel.hidden = true;
   const item = checklist.find(i => i.id === 'shelter');
-  if (item && !item.done) {
-    item.done = true;
-  }
-  cell.type     = CellType.EMPTY;
+  if (item) item.done = true;
   cell.depleted = true;
   renderMap(svg, world.cells, player.col, player.row);
   Audio.collected();
-  consumeAction('Abrigo construído! Agora você tem onde se esconder esta noite.');
+  consumeAction('Abrigo construído! Você tem onde se esconder esta noite.');
+}
+
+// ── Consumir ação ─────────────────────────────────────────────────────────────
+function consumeAction(msg) {
+  actionsLeft = Math.max(0, actionsLeft - 1);
+  renderHUD();
+  speak(`${msg} ${actionsLeft} ação${actionsLeft !== 1 ? 'ões' : ''} restante${actionsLeft !== 1 ? 's' : ''}.`);
+  if (actionsLeft <= URGENT_ACTIONS && actionsLeft > 0) Audio.urgent();
+  if (actionsLeft <= 0) triggerNight();
 }
 
 function checklistDone(id) {
@@ -242,11 +265,11 @@ function checklistDone(id) {
 // ── Noite ─────────────────────────────────────────────────────────────────────
 function triggerNight() {
   Audio.nightfall();
-  actionPanel.hidden = true;
+  actionPanel.hidden   = true;
+  minigamePanel.hidden = true;
 
   const done     = checklist.filter(i => i.done).length;
-  const total    = checklist.length;
-  const survived = done >= 4; // precisa de pelo menos 4 dos 5 itens
+  const survived = done >= 4;
 
   const narratives = {
     true: [
