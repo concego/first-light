@@ -28,18 +28,20 @@ let world, player, checklist, actionsLeft;
 let minigameActive = false;
 
 // ── Elementos DOM ─────────────────────────────────────────────────────────────
-const mapContainer  = document.getElementById('map-container');
-const ariaLive      = document.getElementById('aria-live');
-const hudTime       = document.getElementById('hud-time');
-const hudActions    = document.getElementById('hud-actions');
-const hudChecklist  = document.getElementById('hud-checklist');
-const actionPanel   = document.getElementById('action-panel');
-const actionInfo    = document.getElementById('action-cell-info');
-const actionBtns    = document.getElementById('action-buttons');
-const minigamePanel = document.getElementById('minigame-panel');
-const nightPanel    = document.getElementById('night-panel');
-const nightText     = document.getElementById('night-narrative');
-const btnRestart    = document.getElementById('btn-restart');
+const mapContainer   = document.getElementById('map-container');
+const ariaLive       = document.getElementById('aria-live');
+const hudTime        = document.getElementById('hud-time');
+const hudActions     = document.getElementById('hud-actions');
+const hudChecklist   = document.getElementById('hud-checklist');
+const actionDialog   = document.getElementById('action-dialog');
+const actionTitle    = document.getElementById('action-dialog-title');
+const actionDesc     = document.getElementById('action-dialog-desc');
+const actionBtns     = document.getElementById('action-buttons');
+const btnCloseAction = document.getElementById('btn-close-action');
+const minigamePanel  = document.getElementById('minigame-panel');
+const nightPanel     = document.getElementById('night-panel');
+const nightText      = document.getElementById('night-narrative');
+const btnRestart     = document.getElementById('btn-restart');
 
 // ── Acessibilidade ────────────────────────────────────────────────────────────
 function speak(msg) {
@@ -65,7 +67,7 @@ function init() {
   renderMap(mapContainer, world.cells, player.col, player.row);
   attachCellClickHandler(mapContainer, onCellClick);
 
-  actionPanel.hidden   = true;
+  actionDialog.close();
   nightPanel.hidden    = true;
   minigamePanel.hidden = true;
 
@@ -147,14 +149,15 @@ function onCellClick({ col, row }) {
   showActionPanel(cell);
 }
 
-// ── Painel de ação ────────────────────────────────────────────────────────────
+// ── Painel de ação — dialog modal ─────────────────────────────────────────────
 function showActionPanel(cell) {
   actionBtns.innerHTML = '';
 
   if (cell.depleted) {
-    actionInfo.textContent = 'Esta área já foi explorada.';
+    actionTitle.textContent = 'Área explorada';
+    actionDesc.textContent  = 'Esta área já foi explorada. Não há mais nada aqui.';
     Audio.depleted();
-    actionPanel.hidden = false;
+    actionDialog.showModal();
     return;
   }
 
@@ -162,49 +165,56 @@ function showActionPanel(cell) {
 
   switch (cell.type) {
     case CellType.WOOD:
-      actionInfo.textContent = '🪵 Madeira disponível. Coletar custa 30 minutos.';
-      addBtn('Coletar madeira',  () => startExtract(cell, 'wood'));
+      actionTitle.textContent = '🪵 Madeira';
+      actionDesc.textContent  = 'Há madeira aqui. Coletar custa 30 minutos.';
+      addBtn('Coletar madeira',  () => { actionDialog.close(); startExtract(cell, 'wood'); });
       break;
 
     case CellType.FOOD:
-      actionInfo.textContent = '🍖 Comida disponível. Coletar custa 30 minutos.';
-      addBtn('Coletar comida',   () => startExtract(cell, 'food'));
+      actionTitle.textContent = '🍖 Comida';
+      actionDesc.textContent  = 'Há comida aqui. Coletar custa 30 minutos.';
+      addBtn('Coletar comida',   () => { actionDialog.close(); startExtract(cell, 'food'); });
       break;
 
     case CellType.HERB:
-      actionInfo.textContent = '🌿 Ervas disponíveis. Coletar custa 30 minutos.';
-      addBtn('Coletar ervas',    () => startExtract(cell, 'herb'));
+      actionTitle.textContent = '🌿 Ervas';
+      actionDesc.textContent  = 'Há ervas medicinais aqui. Coletar custa 30 minutos.';
+      addBtn('Coletar ervas',    () => { actionDialog.close(); startExtract(cell, 'herb'); });
       break;
 
     case CellType.WEAPON:
-      actionInfo.textContent = '⚔️ Material para arma. Coletar custa 30 minutos.';
-      addBtn('Coletar material', () => startExtract(cell, 'weapon'));
+      actionTitle.textContent = '⚔️ Material de arma';
+      actionDesc.textContent  = 'Há material para fabricar uma arma. Coletar custa 30 minutos.';
+      addBtn('Coletar material', () => { actionDialog.close(); startExtract(cell, 'weapon'); });
       break;
 
     case CellType.GOBLIN:
-      actionInfo.textContent = '👺 Um goblin está aqui! Combater custa 30 minutos.';
-      addBtn('Combater goblin',  () => startCombat(cell, 'goblin'));
-      addBtn('Fugir',            () => { actionPanel.hidden = true; speak('Você se afastou.'); });
+      actionTitle.textContent = '👺 Goblin!';
+      actionDesc.textContent  = 'Um goblin está aqui. Combater custa 30 minutos. Você também pode fugir.';
+      addBtn('Combater goblin',  () => { actionDialog.close(); startCombat(cell, 'goblin'); });
+      addBtn('Fugir',            () => { actionDialog.close(); speak('Você se afastou do goblin.'); });
       break;
 
     case CellType.WOLF:
-      actionInfo.textContent = '🐺 Um lobo está aqui! Combater custa 30 minutos.';
-      addBtn('Combater lobo',    () => startCombat(cell, 'wolf'));
-      addBtn('Fugir',            () => { actionPanel.hidden = true; speak('Você se afastou.'); });
+      actionTitle.textContent = '🐺 Lobo!';
+      actionDesc.textContent  = 'Um lobo está aqui. Combater custa 30 minutos. Você também pode fugir.';
+      addBtn('Combater lobo',    () => { actionDialog.close(); startCombat(cell, 'wolf'); });
+      addBtn('Fugir',            () => { actionDialog.close(); speak('Você se afastou do lobo.'); });
       break;
 
     case CellType.EMPTY:
     default: {
       const canBuild = checklistDone('wood') && !checklistDone('shelter');
-      actionInfo.textContent = canBuild
-        ? '🏕️ Área vazia. Você pode construir o abrigo aqui (30 minutos).'
-        : 'Área vazia. Nada para fazer aqui.';
-      if (canBuild) addBtn('Construir abrigo', () => doBuildShelter(cell));
+      actionTitle.textContent = '🏕️ Área vazia';
+      actionDesc.textContent  = canBuild
+        ? 'Você tem madeira suficiente. Pode construir o abrigo aqui (30 minutos).'
+        : 'Nada para fazer aqui ainda.';
+      if (canBuild) addBtn('Construir abrigo', () => { actionDialog.close(); doBuildShelter(cell); });
       break;
     }
   }
 
-  actionPanel.hidden = false;
+  actionDialog.showModal();
 }
 
 function addBtn(label, handler) {
@@ -216,7 +226,7 @@ function addBtn(label, handler) {
 
 // ── Minigame: Extração ────────────────────────────────────────────────────────
 function startExtract(cell, itemId) {
-  actionPanel.hidden = true;
+  
   minigameActive     = true;
 
   startExtractMinigame({
@@ -250,7 +260,7 @@ function startExtract(cell, itemId) {
 
 // ── Minigame: Combate ─────────────────────────────────────────────────────────
 function startCombat(cell, enemyType) {
-  actionPanel.hidden = true;
+  
   minigameActive     = true;
 
   startCombatMinigame({
@@ -282,7 +292,7 @@ function startCombat(cell, enemyType) {
 
 // ── Ação: Construir abrigo ────────────────────────────────────────────────────
 function doBuildShelter(cell) {
-  actionPanel.hidden = true;
+  
   const item = checklist.find(i => i.id === 'shelter');
   if (item) item.done = true;
   cell.depleted = true;
@@ -310,7 +320,7 @@ function checklistDone(id) {
 // ── Noite ─────────────────────────────────────────────────────────────────────
 function triggerNight() {
   Audio.nightfall();
-  actionPanel.hidden   = true;
+  actionDialog.close();
   minigamePanel.hidden = true;
 
   const done     = checklist.filter(i => i.done).length;
@@ -333,6 +343,11 @@ function triggerNight() {
 
   speak(`A noite chegou. ${nightText.textContent}`);
 }
+
+btnCloseAction.addEventListener('click', () => actionDialog.close());
+
+// Fechar com Escape já é nativo do <dialog>, mas garantimos o foco de volta
+actionDialog.addEventListener('close', () => focusPlayer(player.col, player.row));
 
 // ── Reinício ──────────────────────────────────────────────────────────────────
 btnRestart.addEventListener('click', () => {
