@@ -87,6 +87,18 @@ body {
   border-spacing: 3px;
 }
 
+/* Cabeçalhos de linha/coluna — visíveis mas pequenos */
+#map-table th {
+  width: 20px;
+  height: 20px;
+  font-size: .65rem;
+  color: #5a4a2e;
+  text-align: center;
+  vertical-align: middle;
+  font-weight: normal;
+  padding: 0;
+}
+
 #map-table td {
   width: 44px;
   height: 44px;
@@ -102,12 +114,7 @@ body {
 
 #map-table td:focus {
   outline: 3px solid #f5c842;
-  outline-offset: 1px;
-}
-
-#map-table td[tabindex="-1"] {
-  cursor: default;
-  pointer-events: none;
+  outline-offset: 2px;
 }
 
 /* células do SVG — estilizadas via atributos/classes no JS */
