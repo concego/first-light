@@ -76,15 +76,38 @@ body {
   opacity: .7;
 }
 
-/* ── Mapa SVG ─────────────────────────────────────────────────── */
+/* ── Mapa (tabela) ────────────────────────────────────────────── */
 #map-container {
   overflow: auto;
   max-width: 100vw;
 }
 
-#map-svg {
-  display: block;
-  /* tamanho calculado em JS */
+#map-table {
+  border-collapse: separate;
+  border-spacing: 3px;
+}
+
+#map-table td {
+  width: 44px;
+  height: 44px;
+  text-align: center;
+  vertical-align: middle;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 1.3rem;
+  border: 2px solid transparent;
+  user-select: none;
+  transition: border-color .1s, background .1s;
+}
+
+#map-table td:focus {
+  outline: 3px solid #f5c842;
+  outline-offset: 1px;
+}
+
+#map-table td[tabindex="-1"] {
+  cursor: default;
+  pointer-events: none;
 }
 
 /* células do SVG — estilizadas via atributos/classes no JS */
