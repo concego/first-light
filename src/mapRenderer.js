@@ -1,14 +1,11 @@
 /**
- * mapRenderer.js — Renderização SVG do mapa
- * Sem lógica de jogo aqui — só visual e eventos de clique.
+ * mapRenderer.js — Renderização via tabela HTML acessível
+ * Tabela navegável por leitor de tela (setas no TalkBack/NVDA).
+ * Cada célula é um <td> com role, aria-label e tabindex.
  */
 
 import { CellType } from './world.js';
 
-const CELL = 48;   // px por célula
-const GAP  = 2;    // espaço entre células
-
-// Ícones SVG simples por tipo
 const ICONS = {
   [CellType.EMPTY]:   '',
   [CellType.WOOD]:    '🪵',
@@ -21,113 +18,152 @@ const ICONS = {
 
 const LABELS = {
   [CellType.EMPTY]:   'Área vazia',
-  [CellType.WOOD]:    'Árvore com madeira',
-  [CellType.FOOD]:    'Fonte de comida',
-  [CellType.HERB]:    'Ervas medicinais',
-  [CellType.WEAPON]:  'Material para arma',
-  [CellType.GOBLIN]:  'Goblin!',
-  [CellType.WOLF]:    'Lobo!',
+  [CellType.WOOD]:    'Madeira',
+  [CellType.FOOD]:    'Comida',
+  [CellType.HERB]:    'Ervas',
+  [CellType.WEAPON]:  'Material de arma',
+  [CellType.GOBLIN]:  'Goblin',
+  [CellType.WOLF]:    'Lobo',
 };
 
-export function initMapRenderer(svg, { cols, rows }) {
-  const W = cols * (CELL + GAP) - GAP;
-  const H = rows * (CELL + GAP) - GAP;
-  svg.setAttribute('width',   W);
-  svg.setAttribute('height',  H);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+let _table = null;
+let _clickCb = null;
+
+export function initMapRenderer(container, { cols, rows }) {
+  // Limpa container — aceita tanto <svg> quanto <div>/<main>
+  const parent = container.parentElement ?? document.getElementById('map-container');
+
+  // Remove SVG se ainda existir
+  const oldSvg = document.getElementById('map-svg');
+  if (oldSvg) oldSvg.remove();
+
+  _table = document.createElement('table');
+  _table.id = 'map-table';
+  _table.setAttribute('role', 'grid');
+  _table.setAttribute('aria-label', `Mapa ${cols} por ${rows}. Use as setas para navegar, Enter ou Espaço para interagir.`);
+  _table.style.cssText = 'border-collapse:separate;border-spacing:3px;';
+
+  // Cria linhas e células vazias
+  for (let r = 0; r < rows; r++) {
+    const tr = document.createElement('tr');
+    for (let c = 0; c < cols; c++) {
+      const td = document.createElement('td');
+      td.dataset.col = c;
+      td.dataset.row = r;
+      td.setAttribute('role', 'gridcell');
+      td.setAttribute('tabindex', '-1');
+      td.style.cssText = `
+        width:44px;height:44px;text-align:center;vertical-align:middle;
+        border-radius:5px;cursor:pointer;font-size:1.3rem;
+        border:2px solid transparent;user-select:none;
+      `;
+      tr.appendChild(td);
+    }
+    _table.appendChild(tr);
+  }
+
+  parent.appendChild(_table);
+
+  // Navegação por teclado (setas movem foco dentro da tabela)
+  _table.addEventListener('keydown', _onKeydown);
+  _table.addEventListener('click',   _onClick);
 }
 
-export function renderMap(svg, cells, playerCol, playerRow) {
-  svg.innerHTML = '';
+export function renderMap(container, cells, playerCol, playerRow) {
+  if (!_table) return;
 
   for (const cell of cells) {
-    const x = cell.col * (CELL + GAP);
-    const y = cell.row * (CELL + GAP);
-    const isPlayer = cell.col === playerCol && cell.row === playerRow;
+    const td = _table.querySelector(`td[data-col="${cell.col}"][data-row="${cell.row}"]`);
+    if (!td) continue;
 
-    // Grupo da célula
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('role', 'gridcell');
-    g.setAttribute('tabindex', cell.revealed ? '0' : '-1');
-    g.dataset.col = cell.col;
-    g.dataset.row = cell.row;
+    const isPlayer   = cell.col === playerCol && cell.row === playerRow;
+    const isRevealed = cell.revealed;
+    const isDepleted = cell.depleted;
 
-    // Fundo
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x);
-    rect.setAttribute('y', y);
-    rect.setAttribute('width',  CELL);
-    rect.setAttribute('height', CELL);
-    rect.setAttribute('rx', 4);
-    rect.setAttribute('ry', 4);
-
-    if (!cell.revealed) {
-      rect.setAttribute('fill', '#0d0d0d');
-      g.setAttribute('aria-label', 'Área desconhecida');
+    // ── Visual ──────────────────────────────────────────────────────────
+    if (!isRevealed) {
+      td.style.background   = '#0d0d0d';
+      td.style.borderColor  = 'transparent';
+      td.style.color        = 'transparent';
+      td.textContent        = '·';
+      td.setAttribute('tabindex', '-1');
     } else if (isPlayer) {
-      rect.setAttribute('fill', '#3a2a00');
-      rect.setAttribute('stroke', '#f5c842');
-      rect.setAttribute('stroke-width', 2);
-    } else if (cell.depleted) {
-      rect.setAttribute('fill', '#2a2a2a');
-      g.setAttribute('aria-label', 'Área explorada');
+      td.style.background   = '#3a2a00';
+      td.style.borderColor  = '#f5c842';
+      td.style.color        = '#f5c842';
+      td.textContent        = '🧍';
+      td.setAttribute('tabindex', '0');
+    } else if (isDepleted) {
+      td.style.background   = '#222';
+      td.style.borderColor  = '#444';
+      td.style.color        = '#555';
+      td.textContent        = '·';
+      td.setAttribute('tabindex', '0');
     } else {
-      rect.setAttribute('fill', '#2a1f10');
-      rect.setAttribute('stroke', '#5a4a2e');
-      rect.setAttribute('stroke-width', 1);
-
-      const label = cell.visited
-        ? (LABELS[cell.type] ?? 'Área vazia')
-        : 'Área revelada';
-      g.setAttribute('aria-label', `Linha ${cell.row + 1}, Coluna ${cell.col + 1}: ${label}`);
+      td.style.background   = '#2a1f10';
+      td.style.borderColor  = '#5a4a2e';
+      td.style.color        = '#f0e0b0';
+      td.textContent        = ICONS[cell.type] || '·';
+      td.setAttribute('tabindex', '0');
     }
 
-    g.appendChild(rect);
-
-    // Ícone emoji (só em células reveladas e não vazias)
-    if (cell.revealed && !cell.depleted) {
-      const icon = isPlayer ? '🧍' : (ICONS[cell.type] ?? '');
-      if (icon) {
-        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        txt.setAttribute('x', x + CELL / 2);
-        txt.setAttribute('y', y + CELL / 2 + 8);
-        txt.setAttribute('text-anchor', 'middle');
-        txt.setAttribute('font-size', '22');
-        txt.setAttribute('aria-hidden', 'true');
-        txt.textContent = icon;
-        g.appendChild(txt);
-      }
+    // ── aria-label ──────────────────────────────────────────────────────
+    const pos = `Linha ${cell.row + 1}, Coluna ${cell.col + 1}`;
+    if (!isRevealed) {
+      td.setAttribute('aria-label', `${pos}: desconhecido`);
+    } else if (isPlayer) {
+      const content = isDepleted ? 'explorada' : (LABELS[cell.type] || 'vazia');
+      td.setAttribute('aria-label', `${pos}: você está aqui. ${content}`);
+    } else if (isDepleted) {
+      td.setAttribute('aria-label', `${pos}: área explorada`);
+    } else {
+      const content = LABELS[cell.type] || 'vazia';
+      td.setAttribute('aria-label', `${pos}: ${content}`);
     }
-
-    // Coordenada pequena (debug / acessibilidade)
-    if (cell.revealed) {
-      const coord = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      coord.setAttribute('x', x + 4);
-      coord.setAttribute('y', y + 12);
-      coord.setAttribute('font-size', '9');
-      coord.setAttribute('fill', '#888');
-      coord.setAttribute('aria-hidden', 'true');
-      coord.textContent = `${cell.col},${cell.row}`;
-      g.appendChild(coord);
-    }
-
-    svg.appendChild(g);
   }
 }
 
-export function attachCellClickHandler(svg, callback) {
-  svg.addEventListener('click', e => {
-    const g = e.target.closest('[data-col]');
-    if (!g) return;
-    callback({ col: Number(g.dataset.col), row: Number(g.dataset.row) });
-  });
+export function attachCellClickHandler(container, callback) {
+  _clickCb = callback;
+}
 
-  // Teclado: Enter/Espaço ativa a célula focada
-  svg.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const g = document.activeElement.closest('[data-col]') ?? document.activeElement;
-    if (!g?.dataset?.col) return;
-    e.preventDefault();
-    callback({ col: Number(g.dataset.col), row: Number(g.dataset.row) });
-  });
+// ── Navegação por teclado ──────────────────────────────────────────────────
+function _onKeydown(e) {
+  const td = e.target.closest('td[data-col]');
+  if (!td) return;
+
+  const col = Number(td.dataset.col);
+  const row = Number(td.dataset.row);
+
+  let nextCol = col, nextRow = row;
+
+  switch (e.key) {
+    case 'ArrowRight': nextCol = col + 1; break;
+    case 'ArrowLeft':  nextCol = col - 1; break;
+    case 'ArrowDown':  nextRow = row + 1; break;
+    case 'ArrowUp':    nextRow = row - 1; break;
+    case 'Enter':
+    case ' ':
+      e.preventDefault();
+      if (_clickCb) _clickCb({ col, row });
+      return;
+    default: return;
+  }
+
+  e.preventDefault();
+  const next = _table.querySelector(`td[data-col="${nextCol}"][data-row="${nextRow}"]`);
+  if (next && next.getAttribute('tabindex') !== '-1') next.focus();
+}
+
+function _onClick(e) {
+  const td = e.target.closest('td[data-col]');
+  if (!td || !_clickCb) return;
+  _clickCb({ col: Number(td.dataset.col), row: Number(td.dataset.row) });
+}
+
+// Foca a célula do jogador (chamado após init)
+export function focusPlayer(playerCol, playerRow) {
+  if (!_table) return;
+  const td = _table.querySelector(`td[data-col="${playerCol}"][data-row="${playerRow}"]`);
+  if (td) td.focus();
 }
