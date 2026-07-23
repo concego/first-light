@@ -119,45 +119,67 @@ body {
 
 /* células do SVG — estilizadas via atributos/classes no JS */
 
-/* ── Painel de ação ───────────────────────────────────────────── */
-#action-panel {
-  width: 100%;
-  max-width: 520px;
+/* ── Dialog de ação ───────────────────────────────────────────── */
+#action-dialog {
   background: var(--col-hud);
-  border: 1px solid #5a4a2e;
-  border-radius: 8px;
-  padding: .8rem 1rem;
-  margin-top: 1rem;
+  color: var(--col-text);
+  border: 2px solid var(--col-accent);
+  border-radius: 12px;
+  padding: 1.2rem 1.4rem;
+  max-width: 340px;
+  width: 90vw;
 }
 
-#action-cell-info {
-  font-size: .95rem;
-  margin-bottom: .6rem;
+#action-dialog::backdrop {
+  background: rgba(0,0,0,.7);
+}
+
+#action-dialog-title {
+  font-size: 1.1rem;
   color: var(--col-accent);
+  margin-bottom: .5rem;
+}
+
+#action-dialog-desc {
+  font-size: .9rem;
+  margin-bottom: .9rem;
+  line-height: 1.5;
 }
 
 #action-buttons {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: .5rem;
+  margin-bottom: .8rem;
 }
 
-#action-buttons button {
+#action-buttons button,
+#btn-close-action {
   background: #3a2e1e;
   color: var(--col-text);
   border: 1px solid var(--col-accent);
   border-radius: 6px;
-  padding: .4rem .9rem;
+  padding: .55rem 1rem;
   cursor: pointer;
-  font-size: .9rem;
+  font-size: .95rem;
+  text-align: left;
   transition: background .15s;
 }
 
 #action-buttons button:hover,
-#action-buttons button:focus {
+#action-buttons button:focus,
+#btn-close-action:hover,
+#btn-close-action:focus {
   background: var(--col-accent);
   color: #1a1209;
   outline: 2px solid #fff;
+}
+
+#btn-close-action {
+  width: 100%;
+  text-align: center;
+  border-color: #5a4a2e;
+  margin-top: .2rem;
 }
 
 /* ── Minigame ─────────────────────────────────────────────────── */
