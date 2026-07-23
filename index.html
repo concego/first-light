@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>First Light</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <!-- Região de acessibilidade: anúncios para leitores de tela -->
+  <div id="aria-live" aria-live="assertive" aria-atomic="true" class="sr-only"></div>
+
+  <!-- HUD -->
+  <header id="hud" role="banner">
+    <div id="hud-time" aria-label="Tempo restante">🌅 08:00</div>
+    <div id="hud-actions" aria-label="Ações restantes">⏳ 16 ações</div>
+    <ul id="hud-checklist" aria-label="Lista de sobrevivência" role="list"></ul>
+  </header>
+
+  <!-- Mapa SVG -->
+  <main id="map-container" role="main" aria-label="Mapa">
+    <svg id="map-svg" role="grid" aria-label="Grade do mapa" focusable="true"></svg>
+  </main>
+
+  <!-- Painel de ação contextual -->
+  <section id="action-panel" aria-label="Ações disponíveis" hidden>
+    <p id="action-cell-info"></p>
+    <div id="action-buttons" role="group"></div>
+  </section>
+
+  <!-- Tela de minigame (aparece sobre o mapa) -->
+  <section id="minigame-panel" aria-label="Minigame" hidden></section>
+
+  <!-- Tela de fim de dia -->
+  <section id="night-panel" aria-label="Chegou a noite" hidden>
+    <h2>A noite chegou</h2>
+    <p id="night-narrative"></p>
+    <button id="btn-restart">Jogar novamente</button>
+  </section>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
