@@ -20,11 +20,13 @@
   <!-- Mapa (tabela criada pelo JS) -->
   <main id="map-container" role="main" aria-label="Mapa"></main>
 
-  <!-- Painel de ação contextual -->
-  <section id="action-panel" aria-label="Ações disponíveis" hidden>
-    <p id="action-cell-info"></p>
+  <!-- Dialog de ação — modal focado automaticamente pelo TalkBack -->
+  <dialog id="action-dialog" aria-labelledby="action-dialog-title" aria-modal="true">
+    <h2 id="action-dialog-title"></h2>
+    <p id="action-dialog-desc"></p>
     <div id="action-buttons" role="group"></div>
-  </section>
+    <button id="btn-close-action">Fechar</button>
+  </dialog>
 
   <!-- Tela de minigame (aparece sobre o mapa) -->
   <section id="minigame-panel" aria-label="Minigame" hidden></section>
