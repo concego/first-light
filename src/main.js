@@ -1,28 +1,34 @@
 /**
  * main.js — Orquestrador principal do First Light
- * Liga todos os módulos: mundo, mapa, HUD, estado, ações, minigames.
+ * Liga todos os módulos: mundo, mapa (tabela), HUD, estado, ações, minigames.
  */
 
 import { generateWorld, getCell, revealAround, CellType, Checklist } from './world.js';
-import { initMapRenderer, renderMap, attachCellClickHandler } from './mapRenderer.js';
+import { initMapRenderer, renderMap, attachCellClickHandler, focusPlayer } from './mapRenderer.js';
 import { Audio } from './audio.js';
 import { startExtractMinigame } from './minigameExtract.js';
 import { startCombatMinigame }  from './minigameCombat.js';
 
-// ── ECJ Game Library ──────────────────────────────────────────────────────────
-import { AccessibilityLayer }
-  from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/AccessibilityLayer.js';
-
 // ── Constantes ────────────────────────────────────────────────────────────────
 const TOTAL_ACTIONS  = 16;
 const URGENT_ACTIONS = 4;
+
+const CELL_LABEL = {
+  [CellType.EMPTY]:   'área vazia',
+  [CellType.WOOD]:    'madeira disponível',
+  [CellType.FOOD]:    'comida disponível',
+  [CellType.HERB]:    'ervas disponíveis',
+  [CellType.WEAPON]:  'material de arma',
+  [CellType.GOBLIN]:  'goblin à vista',
+  [CellType.WOLF]:    'lobo à vista',
+};
 
 // ── Estado global ─────────────────────────────────────────────────────────────
 let world, player, checklist, actionsLeft;
 let minigameActive = false;
 
 // ── Elementos DOM ─────────────────────────────────────────────────────────────
-const svg           = document.getElementById('map-svg');
+const mapContainer  = document.getElementById('map-container');
 const ariaLive      = document.getElementById('aria-live');
 const hudTime       = document.getElementById('hud-time');
 const hudActions    = document.getElementById('hud-actions');
@@ -36,35 +42,44 @@ const nightText     = document.getElementById('night-narrative');
 const btnRestart    = document.getElementById('btn-restart');
 
 // ── Acessibilidade ────────────────────────────────────────────────────────────
-const a11y = AccessibilityLayer.create({ liveRegion: ariaLive });
-function speak(msg) { a11y.speak(msg); }
+function speak(msg) {
+  ariaLive.textContent = '';
+  requestAnimationFrame(() => { ariaLive.textContent = msg; });
+}
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 function init() {
-  world       = generateWorld();
-  actionsLeft = TOTAL_ACTIONS;
-  player      = { col: world.startCol, row: world.startRow };
-  checklist   = Checklist.map(item => ({ ...item, count: 0, done: false }));
+  world          = generateWorld();
+  actionsLeft    = TOTAL_ACTIONS;
+  player         = { col: world.startCol, row: world.startRow };
+  checklist      = Checklist.map(item => ({ ...item, count: 0, done: false }));
   minigameActive = false;
 
   renderHUD();
-  initMapRenderer(svg, world);
-  renderMap(svg, world.cells, player.col, player.row);
-  attachCellClickHandler(svg, onCellClick);
 
-  actionPanel.hidden  = true;
-  nightPanel.hidden   = true;
+  // Remove tabela anterior se existir (reinício)
+  const old = document.getElementById('map-table');
+  if (old) old.remove();
+
+  initMapRenderer(mapContainer, world);
+  renderMap(mapContainer, world.cells, player.col, player.row);
+  attachCellClickHandler(mapContainer, onCellClick);
+
+  actionPanel.hidden   = true;
+  nightPanel.hidden    = true;
   minigamePanel.hidden = true;
 
-  speak('First Light. Você acordou numa floresta desconhecida. A noite está chegando. Explore o mapa e se prepare antes do anoitecer.');
+  focusPlayer(player.col, player.row);
+  speak('First Light. Você acordou numa floresta desconhecida. Explore o mapa e se prepare antes da noite. Use as setas para navegar e Enter para interagir.');
 }
 
 // ── HUD ───────────────────────────────────────────────────────────────────────
 function renderHUD() {
-  const hour   = Math.floor((TOTAL_ACTIONS - actionsLeft) * 30 / 60) + 6;
-  const minute = ((TOTAL_ACTIONS - actionsLeft) * 30) % 60;
-  const timeStr = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-  const sunIcon = actionsLeft > 8 ? '🌅' : actionsLeft > 4 ? '🌤️' : '🌆';
+  const elapsed  = TOTAL_ACTIONS - actionsLeft;
+  const hour     = Math.floor(elapsed * 30 / 60) + 6;
+  const minute   = (elapsed * 30) % 60;
+  const timeStr  = `${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  const sunIcon  = actionsLeft > 8 ? '🌅' : actionsLeft > 4 ? '🌤️' : '🌆';
 
   hudTime.textContent    = `${sunIcon} ${timeStr}`;
   hudActions.textContent = `⏳ ${actionsLeft} ação${actionsLeft !== 1 ? 'ões' : ''} restante${actionsLeft !== 1 ? 's' : ''}`;
@@ -80,28 +95,55 @@ function renderHUD() {
     if (item.done) li.classList.add('done');
     li.setAttribute('aria-label',
       item.done
-        ? `${item.label} concluído`
+        ? `${item.label}: concluído`
         : `${item.label}: ${item.count} de ${item.required}`
     );
     hudChecklist.appendChild(li);
   }
 }
 
-// ── Clique em célula ──────────────────────────────────────────────────────────
+// ── Clique / navegação em célula ──────────────────────────────────────────────
 function onCellClick({ col, row }) {
   if (minigameActive) return;
 
   const cell = getCell(world.cells, col, row);
-  if (!cell || !cell.revealed) return;
+  if (!cell || !cell.revealed) {
+    speak('Área ainda não revelada.');
+    return;
+  }
 
+  // Mover jogador
+  const moved = player.col !== col || player.row !== row;
   player.col = col;
   player.row = row;
 
-  revealAround(world.cells, col, row, world.cols, world.rows);
+  // Revelar ao redor e marcar visitada
+  const newCells = revealAround(world.cells, col, row, world.cols, world.rows);
   cell.visited = true;
 
   Audio.step();
-  renderMap(svg, world.cells, player.col, player.row);
+  if (newCells.length > 0) Audio.reveal();
+
+  // Anunciar inimigos recém-revelados nas adjacentes
+  const enemies = newCells.filter(c => c.type === CellType.GOBLIN || c.type === CellType.WOLF);
+  if (enemies.length > 0) {
+    Audio.enemyNearby();
+  }
+
+  renderMap(mapContainer, world.cells, player.col, player.row);
+
+  // Anunciar posição e conteúdo
+  const pos     = `Linha ${row + 1}, coluna ${col + 1}`;
+  const content = cell.depleted
+    ? 'área já explorada'
+    : (CELL_LABEL[cell.type] || 'área vazia');
+
+  const enemyAlert = enemies.length > 0
+    ? ` Atenção: ${enemies.map(e => CELL_LABEL[e.type]).join(' e ')} nas proximidades.`
+    : '';
+
+  speak(`${pos}. ${content}.${enemyAlert}`);
+
   showActionPanel(cell);
 }
 
@@ -111,56 +153,57 @@ function showActionPanel(cell) {
 
   if (cell.depleted) {
     actionInfo.textContent = 'Esta área já foi explorada.';
-    speak('Área já explorada.');
+    Audio.depleted();
     actionPanel.hidden = false;
     return;
   }
 
+  Audio.actionOpen();
+
   switch (cell.type) {
     case CellType.WOOD:
-      actionInfo.textContent = '🪵 Há madeira aqui. Coletar custa 30 minutos.';
+      actionInfo.textContent = '🪵 Madeira disponível. Coletar custa 30 minutos.';
       addBtn('Coletar madeira',  () => startExtract(cell, 'wood'));
       break;
 
     case CellType.FOOD:
-      actionInfo.textContent = '🍖 Há comida aqui. Coletar custa 30 minutos.';
+      actionInfo.textContent = '🍖 Comida disponível. Coletar custa 30 minutos.';
       addBtn('Coletar comida',   () => startExtract(cell, 'food'));
       break;
 
     case CellType.HERB:
-      actionInfo.textContent = '🌿 Há ervas aqui. Coletar custa 30 minutos.';
+      actionInfo.textContent = '🌿 Ervas disponíveis. Coletar custa 30 minutos.';
       addBtn('Coletar ervas',    () => startExtract(cell, 'herb'));
       break;
 
     case CellType.WEAPON:
-      actionInfo.textContent = '⚔️ Há material para uma arma aqui. Coletar custa 30 minutos.';
+      actionInfo.textContent = '⚔️ Material para arma. Coletar custa 30 minutos.';
       addBtn('Coletar material', () => startExtract(cell, 'weapon'));
       break;
 
     case CellType.GOBLIN:
       actionInfo.textContent = '👺 Um goblin está aqui! Combater custa 30 minutos.';
       addBtn('Combater goblin',  () => startCombat(cell, 'goblin'));
-      addBtn('Fugir',            () => actionPanel.hidden = true);
+      addBtn('Fugir',            () => { actionPanel.hidden = true; speak('Você se afastou.'); });
       break;
 
     case CellType.WOLF:
       actionInfo.textContent = '🐺 Um lobo está aqui! Combater custa 30 minutos.';
       addBtn('Combater lobo',    () => startCombat(cell, 'wolf'));
-      addBtn('Fugir',            () => actionPanel.hidden = true);
+      addBtn('Fugir',            () => { actionPanel.hidden = true; speak('Você se afastou.'); });
       break;
 
     case CellType.EMPTY:
     default: {
       const canBuild = checklistDone('wood') && !checklistDone('shelter');
       actionInfo.textContent = canBuild
-        ? '🏕️ Área vazia. Você pode construir o abrigo aqui (custa 30 minutos).'
-        : 'Área vazia.';
+        ? '🏕️ Área vazia. Você pode construir o abrigo aqui (30 minutos).'
+        : 'Área vazia. Nada para fazer aqui.';
       if (canBuild) addBtn('Construir abrigo', () => doBuildShelter(cell));
       break;
     }
   }
 
-  speak(actionInfo.textContent);
   actionPanel.hidden = false;
 }
 
@@ -174,7 +217,7 @@ function addBtn(label, handler) {
 // ── Minigame: Extração ────────────────────────────────────────────────────────
 function startExtract(cell, itemId) {
   actionPanel.hidden = true;
-  minigameActive = true;
+  minigameActive     = true;
 
   startExtractMinigame({
     cellType: itemId,
@@ -183,13 +226,13 @@ function startExtract(cell, itemId) {
 
     onComplete(type) {
       minigameActive = false;
-      cell.depleted = true;
+      cell.depleted  = true;
       const item = checklist.find(i => i.id === type);
       if (item && !item.done) {
         item.count = Math.min(item.count + 1, item.required);
         if (item.count >= item.required) item.done = true;
       }
-      renderMap(svg, world.cells, player.col, player.row);
+      renderMap(mapContainer, world.cells, player.col, player.row);
       consumeAction(`${item?.label ?? 'Recurso'} coletado!`);
     },
 
@@ -208,7 +251,7 @@ function startExtract(cell, itemId) {
 // ── Minigame: Combate ─────────────────────────────────────────────────────────
 function startCombat(cell, enemyType) {
   actionPanel.hidden = true;
-  minigameActive = true;
+  minigameActive     = true;
 
   startCombatMinigame({
     enemyType,
@@ -217,16 +260,15 @@ function startCombat(cell, enemyType) {
 
     onVictory(type) {
       minigameActive = false;
-      cell.depleted = true;
-      renderMap(svg, world.cells, player.col, player.row);
+      cell.depleted  = true;
+      renderMap(mapContainer, world.cells, player.col, player.row);
       consumeAction(`Você derrotou o ${type === 'goblin' ? 'goblin' : 'lobo'}!`);
     },
 
     onDefeat(type) {
       minigameActive = false;
-      cell.depleted = true;
-      renderMap(svg, world.cells, player.col, player.row);
-      // Derrota no combate custa uma ação extra de recuperação
+      cell.depleted  = true;
+      renderMap(mapContainer, world.cells, player.col, player.row);
       consumeAction(`Você foi derrotado pelo ${type === 'goblin' ? 'goblin' : 'lobo'} e perdeu tempo se recuperando.`);
       consumeAction('Recuperação...');
     },
@@ -244,16 +286,19 @@ function doBuildShelter(cell) {
   const item = checklist.find(i => i.id === 'shelter');
   if (item) item.done = true;
   cell.depleted = true;
-  renderMap(svg, world.cells, player.col, player.row);
-  Audio.collected();
-  consumeAction('Abrigo construído! Você tem onde se esconder esta noite.');
+  renderMap(mapContainer, world.cells, player.col, player.row);
+  Audio.shelter();
+  consumeAction('Abrigo construído! Você tem onde se abrigar esta noite.');
 }
 
 // ── Consumir ação ─────────────────────────────────────────────────────────────
 function consumeAction(msg) {
   actionsLeft = Math.max(0, actionsLeft - 1);
   renderHUD();
-  speak(`${msg} ${actionsLeft} ação${actionsLeft !== 1 ? 'ões' : ''} restante${actionsLeft !== 1 ? 's' : ''}.`);
+
+  const restante = `${actionsLeft} ação${actionsLeft !== 1 ? 'ões' : ''} restante${actionsLeft !== 1 ? 's' : ''}`;
+  speak(`${msg} ${restante}.`);
+
   if (actionsLeft <= URGENT_ACTIONS && actionsLeft > 0) Audio.urgent();
   if (actionsLeft <= 0) triggerNight();
 }
