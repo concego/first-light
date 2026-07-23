@@ -1,50 +1,41 @@
 /**
  * minigameCombat.js — Minigame de combate
- * Usa TimedStrike + CreatureProfile.
- *
- * O inimigo aparece em janelas aleatórias — o jogador precisa atacar
- * enquanto a janela está aberta. Ataques fora da janela causam penalidade.
- *
- * O combate tem HP: inimigo começa com hpMax hits.
- * Cada hit reduz o HP. Cada miss/spook reduz o HP do jogador.
+ * Usa TimedStrike: janelas de ataque aleatórias.
  *
  * Input:
- *   - Desktop: Espaço ou Enter
- *   - Mobile: tilt forward via SensorKit
+ *   - Desktop: Espaço / Enter
+ *   - Mobile:  botão na tela
  *
  * Callbacks:
- *   onVictory(enemyType) — inimigo derrotado
- *   onDefeat(enemyType)  — jogador perdeu (HP zerou)
- *   onFlee()             — jogador fugiu (Escape)
+ *   onVictory(enemyType)
+ *   onDefeat(enemyType)
+ *   onFlee()
  */
 
-import { TimedStrike }    from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/TimedStrike.js';
+import { TimedStrike } from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/TimedStrike.js';
 import { CreatureProfile } from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/CreatureProfile.js';
-import { SensorKit }      from 'https://cdn.jsdelivr.net/gh/concego/ecj-game-library@main/lib/SensorKit.js';
 import { Audio } from './audio.js';
 
 const ENEMY_CONFIG = {
   goblin: {
-    label: '👺 Goblin',
-    hpMax: 3,
-    playerHpMax: 4,
-    profile: {
-      id: 'goblin', name: 'Goblin', weight: 1,
-      surfaceWindowMs: 1800,   // janela aberta por 1.8s
-      cooldownMs: 2500,        // 2.5s entre aparições
-      spookCooldownMs: 4000,
-    },
+    label:       '👺 Goblin',
+    hpMax:       3,
+    playerHp:    3,
+    windowMs:    900,
+    cooldownMs:  1400,
+    spookMs:     1200,
+    minDelayMs:  800,
+    maxDelayMs:  2200,
   },
   wolf: {
-    label: '🐺 Lobo',
-    hpMax: 4,
-    playerHpMax: 3,            // lobo é mais perigoso
-    profile: {
-      id: 'wolf', name: 'Lobo', weight: 1,
-      surfaceWindowMs: 1200,   // janela mais curta — mais difícil
-      cooldownMs: 2000,
-      spookCooldownMs: 5000,
-    },
+    label:       '🐺 Lobo',
+    hpMax:       4,
+    playerHp:    3,
+    windowMs:    700,
+    cooldownMs:  1200,
+    spookMs:     1400,
+    minDelayMs:  600,
+    maxDelayMs:  1800,
   },
 };
 
@@ -52,178 +43,169 @@ export function startCombatMinigame({ enemyType, panel, ariaLive, onVictory, onD
   const cfg = ENEMY_CONFIG[enemyType];
   if (!cfg) { onFlee(); return; }
 
-  let enemyHp   = cfg.hpMax;
-  let playerHp  = cfg.playerHpMax;
-  let combatOver = false;
+  Audio.enemyNearby();
+
+  let enemyHp  = cfg.hpMax;
+  let playerHp = cfg.playerHp;
+  let over     = false;
 
   // ── UI ──────────────────────────────────────────────────────────────────
   panel.hidden = false;
   panel.innerHTML = `
-    <div id="mg-combat" style="display:flex;flex-direction:column;align-items:center;gap:1.1rem;color:#f0e0b0;max-width:360px;width:100%">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:1rem;
+                color:#f0e0b0;max-width:340px;width:100%;padding:1rem">
+
       <h2 style="color:#e53935;font-size:1.4rem">${cfg.label}</h2>
 
       <!-- HP inimigo -->
-      <div style="width:100%">
-        <div style="font-size:.85rem;margin-bottom:.3rem">${cfg.label} — Vida</div>
-        <div style="display:flex;gap:6px" id="enemy-hp-dots"></div>
+      <div style="width:100%;text-align:center">
+        <div style="font-size:.8rem;color:#a09070;margin-bottom:.25rem">
+          HP do inimigo
+        </div>
+        <div id="cm-enemy-hp" style="font-size:1.4rem;letter-spacing:4px"></div>
       </div>
 
       <!-- HP jogador -->
-      <div style="width:100%">
-        <div style="font-size:.85rem;margin-bottom:.3rem">Sua vida</div>
-        <div style="display:flex;gap:6px" id="player-hp-dots"></div>
+      <div style="width:100%;text-align:center">
+        <div style="font-size:.8rem;color:#a09070;margin-bottom:.25rem">
+          Seu HP
+        </div>
+        <div id="cm-player-hp" style="font-size:1.4rem;letter-spacing:4px"></div>
       </div>
 
-      <!-- Arena: mostra se o alvo está visível -->
-      <div id="combat-arena"
+      <!-- Indicador de janela -->
+      <div id="cm-window"
            aria-live="assertive" aria-atomic="true"
-           style="width:120px;height:120px;border-radius:50%;border:3px solid #5a4a2e;
-                  display:flex;align-items:center;justify-content:center;
-                  font-size:3.5rem;background:#1a1209;transition:border-color .15s">
-        <span id="combat-enemy-icon" style="opacity:.3">?</span>
+           style="font-size:2.2rem;min-height:56px;line-height:1.2;
+                  transition:color .1s,transform .1s">
+        …
       </div>
 
-      <p id="combat-status" style="font-size:.95rem;text-align:center;min-height:1.4rem"></p>
+      <!-- Feedback -->
+      <div id="cm-feedback" aria-live="polite"
+           style="font-size:1rem;min-height:1.4rem;font-weight:bold;text-align:center"></div>
 
-      <p style="font-size:.8rem;color:#a09070;text-align:center">
-        <strong>Espaço / Enter</strong> para atacar quando o inimigo aparecer.<br>
-        Tilt para frente no mobile.
-      </p>
+      <!-- Botão de ataque -->
+      <button id="cm-btn-attack"
+              aria-label="Atacar"
+              style="width:110px;height:110px;font-size:2.2rem;border-radius:50%;
+                     background:#3a0a0a;color:#f0e0b0;border:3px solid #e53935;
+                     cursor:pointer;transition:background .12s">
+        ⚔️
+      </button>
 
-      <button id="combat-flee"
-              style="background:transparent;color:#f0e0b0;border:1px solid #5a4a2e;border-radius:6px;padding:.35rem .9rem;cursor:pointer;font-size:.85rem">
-        Fugir (Esc)
+      <button id="cm-btn-flee"
+              style="background:transparent;color:#a09070;border:1px solid #5a4a2e;
+                     border-radius:6px;padding:.35rem .9rem;cursor:pointer;font-size:.85rem">
+        Fugir
       </button>
     </div>
   `;
 
-  const elEnemyDots  = panel.querySelector('#enemy-hp-dots');
-  const elPlayerDots = panel.querySelector('#player-hp-dots');
-  const elArena      = panel.querySelector('#combat-arena');
-  const elEnemyIcon  = panel.querySelector('#combat-enemy-icon');
-  const elStatus     = panel.querySelector('#combat-status');
-  const btnFlee      = panel.querySelector('#combat-flee');
-
-  const enemyEmoji = cfg.label.split(' ')[0];
+  const elEnemyHp  = panel.querySelector('#cm-enemy-hp');
+  const elPlayerHp = panel.querySelector('#cm-player-hp');
+  const elWindow   = panel.querySelector('#cm-window');
+  const elFeedback = panel.querySelector('#cm-feedback');
+  const btnAttack  = panel.querySelector('#cm-btn-attack');
+  const btnFlee    = panel.querySelector('#cm-btn-flee');
 
   function renderHp() {
-    elEnemyDots.innerHTML = '';
-    for (let i = 0; i < cfg.hpMax; i++) {
-      const dot = document.createElement('span');
-      dot.textContent = i < enemyHp ? '❤️' : '🖤';
-      elEnemyDots.appendChild(dot);
-    }
-    elPlayerDots.innerHTML = '';
-    for (let i = 0; i < cfg.playerHpMax; i++) {
-      const dot = document.createElement('span');
-      dot.textContent = i < playerHp ? '💚' : '🖤';
-      elPlayerDots.appendChild(dot);
-    }
+    elEnemyHp.textContent  = '❤️'.repeat(enemyHp)  + '🖤'.repeat(cfg.hpMax   - enemyHp);
+    elPlayerHp.textContent = '❤️'.repeat(playerHp) + '🖤'.repeat(cfg.playerHp - playerHp);
+    elEnemyHp.setAttribute('aria-label',  `${enemyHp} de ${cfg.hpMax}`);
+    elPlayerHp.setAttribute('aria-label', `${playerHp} de ${cfg.playerHp}`);
   }
   renderHp();
 
-  // ── CreatureProfile + TimedStrike ────────────────────────────────────────
-  const pool = CreatureProfile.createPool([cfg.profile]);
+  // ── TimedStrike ──────────────────────────────────────────────────────────
   const strike = TimedStrike.create({
-    pool,
-    autoAdvance: true,
-    defaultCooldown: cfg.profile.cooldownMs,
-    defaultSpookCooldown: cfg.profile.spookCooldownMs,
+    rounds:            99,      // ilimitado — termina por HP
+    windowMs:          cfg.windowMs,
+    defaultCooldown:   cfg.cooldownMs,
+    defaultSpookCooldown: cfg.spookMs,
+    minDelay:          cfg.minDelayMs,
+    maxDelay:          cfg.maxDelayMs,
+    autoAdvance:       true,
   });
 
-  strike.on('surfacing', () => {
-    elEnemyIcon.style.opacity = '1';
-    elEnemyIcon.textContent   = enemyEmoji;
-    elArena.style.borderColor = '#e53935';
-    elStatus.textContent      = 'ATAQUE!';
+  strike.on('surfacing', ({ creature }) => {
+    if (over) return;
+    elWindow.textContent   = '⚡ AGORA!';
+    elWindow.style.color   = '#f5c842';
+    elWindow.style.transform = 'scale(1.15)';
+    elFeedback.textContent = '';
     Audio.strikeWindow();
-    announce('Inimigo visível — ATAQUE!');
+    announce('Ataque agora!');
   });
 
-  strike.on('submerged', ({ reason }) => {
-    elEnemyIcon.style.opacity = '.3';
-    elEnemyIcon.textContent   = '?';
-    elArena.style.borderColor = '#5a4a2e';
-    if (reason === 'hit') return; // hit já tratado abaixo
-    elStatus.textContent = 'Fugiu...';
-  });
+  strike.on('submerged', ({ creature, reason }) => {
+    if (over) return;
+    elWindow.textContent   = '…';
+    elWindow.style.color   = '#a09070';
+    elWindow.style.transform = 'scale(1)';
 
-  strike.on('hit', () => {
-    if (combatOver) return;
-    enemyHp--;
-    renderHp();
-    Audio.strikeHit();
-    elStatus.textContent = `Acertou! Vida do inimigo: ${enemyHp}/${cfg.hpMax}`;
-    announce(`Acertou! Vida do inimigo: ${enemyHp}`);
+    if (reason === 'hit') {
+      enemyHp--;
+      renderHp();
+      elFeedback.textContent = '✓ Acerto!';
+      elFeedback.style.color = '#4caf50';
+      Audio.strikeHit();
+      announce(`Acerto! HP inimigo: ${enemyHp}`);
 
-    if (enemyHp <= 0) {
-      combatOver = true;
-      Audio.enemyDown();
-      announce(`${cfg.label} derrotado!`);
-      cleanup();
-      onVictory(enemyType);
-    }
-  });
+      if (enemyHp <= 0) {
+        over = true;
+        Audio.enemyDown();
+        announce(`${cfg.label} derrotado!`);
+        cleanup();
+        onVictory(enemyType);
+      }
+    } else if (reason === 'timeout') {
+      // janela fechou sem ataque — inimigo ataca
+      playerHp--;
+      renderHp();
+      elFeedback.textContent = '✗ Você levou dano!';
+      elFeedback.style.color = '#e53935';
+      Audio.damage();
+      announce(`Levou dano. Seu HP: ${playerHp}`);
 
-  strike.on('miss', () => {
-    if (combatOver) return;
-    playerHp--;
-    renderHp();
-    Audio.damage();
-    elStatus.textContent = `Escapou! Sua vida: ${playerHp}/${cfg.playerHpMax}`;
-    announce(`Inimigo escapou. Você levou dano. Vida: ${playerHp}`);
-
-    if (playerHp <= 0) {
-      combatOver = true;
-      announce('Você foi derrotado!');
-      cleanup();
-      onDefeat(enemyType);
+      if (playerHp <= 0) {
+        over = true;
+        announce('Você foi derrotado!');
+        cleanup();
+        onDefeat(enemyType);
+      }
     }
   });
 
   strike.on('spooked', () => {
-    if (combatOver) return;
-    playerHp--;
-    renderHp();
-    Audio.damage();
-    elStatus.textContent = `Ataque no vazio! Você se expôs. Vida: ${playerHp}/${cfg.playerHpMax}`;
-    announce(`Ataque em falso. Você levou dano. Vida: ${playerHp}`);
-
-    if (playerHp <= 0) {
-      combatOver = true;
-      announce('Você foi derrotado!');
-      cleanup();
-      onDefeat(enemyType);
-    }
+    if (over) return;
+    elFeedback.textContent = '⚠️ Ataque em falso!';
+    elFeedback.style.color = '#ff9800';
+    Audio.spook();
+    announce('Ataque em falso! Aguarde a janela.');
   });
 
-  strike.on('cooldown', ({ ms }) => {
-    if (combatOver) return;
-    elStatus.textContent = `Aguardando... (${(ms / 1000).toFixed(1)}s)`;
+  strike.on('cooldown', () => {
+    if (over) return;
+    elWindow.textContent   = '…';
+    elWindow.style.color   = '#a09070';
+    elWindow.style.transform = 'scale(1)';
   });
 
-  // ── Input teclado ────────────────────────────────────────────────────────
+  // ── Input ────────────────────────────────────────────────────────────────
+  function doAttack() {
+    if (!over) strike.attack();
+  }
+
   function onKey(e) {
-    if (combatOver) return;
+    if (over) return;
     if (e.key === 'Escape') { cleanup(); onFlee(); return; }
-    if (e.key === ' ' || e.key === 'Enter') {
-      e.preventDefault();
-      strike.attack();
-    }
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); doAttack(); }
   }
   document.addEventListener('keydown', onKey);
 
-  // ── Input mobile ─────────────────────────────────────────────────────────
-  let sensor = null;
-  try {
-    sensor = SensorKit.create();
-    sensor.on('tilt', ({ direction }) => {
-      if (!combatOver && direction === 'forward') strike.attack();
-    });
-    sensor.start();
-  } catch (_) {}
-
-  btnFlee.addEventListener('click', () => { cleanup(); onFlee(); });
+  btnAttack.addEventListener('click', doAttack);
+  btnFlee.addEventListener('click',   () => { cleanup(); onFlee(); });
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function announce(msg) {
@@ -233,13 +215,11 @@ export function startCombatMinigame({ enemyType, panel, ariaLive, onVictory, onD
 
   function cleanup() {
     strike.stop();
-    if (sensor) try { sensor.stop(); } catch (_) {}
     document.removeEventListener('keydown', onKey);
     panel.hidden = true;
     panel.innerHTML = '';
   }
 
-  // ── Start ────────────────────────────────────────────────────────────────
   strike.start();
-  announce(`Combate iniciado contra ${cfg.label}. Aguarde o momento certo para atacar.`);
+  announce(`Combate: ${cfg.label}. HP: ${enemyHp}. Aguarde a janela e ataque.`);
 }
